@@ -58,11 +58,16 @@ python validator.py
 
 ## Citation
 
+If you use this codebase, methodology, or semantic mapping in your research, please cite:
+
 ```bibtex
-@article{cakir2026voynich,
-  title={Computational Decryption and Semantic Mapping of Beinecke MS 408: A Deterministic Morphological State Model for Herbal and Pharmacological Sections},
-  author={Çakır, Yusuf and Collaborators},
-  journal={arXiv preprint / Digital Humanities Research},
-  year={2026}
+@software{cakir_2026_voynich_dmsm,
+  author       = {Çakır, Yusuf},
+  title        = {Voynich DMSM: Deterministic Morphological State Model for Beinecke MS 408},
+  year         = {2026},
+  publisher    = {Zenodo},
+  version      = {v1.0.1},
+  doi          = {10.5281/zenodo.23378280},
+  url          = {[https://doi.org/10.5281/zenodo.23378279](https://doi.org/10.5281/zenodo.23378279)}
 }
 ```
