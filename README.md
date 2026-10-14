@@ -3,6 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: Research Preprint](https://img.shields.io/badge/Status-Research%20Draft-brightgreen.svg)]()
+[![DOI](https://zenodo.org/badge/1405892132.svg)](https://doi.org/10.5281/zenodo.23378279)
 
 > A reproducible computational pipeline demonstrating that the **Herbal (Folios 1r–66v, 87r–102v)** and **Recipe (Folios 103r–116v)** sections of Yale University's Voynich Manuscript (Beinecke MS 408) follow a constrained 3-state finite automaton (Prefix -> Core -> Suffix) corresponding to early 15th-century Latin/Italian pharmaceutical shorthand.
 
