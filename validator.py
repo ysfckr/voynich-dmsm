@@ -1,170 +1,187 @@
+"""
+Voynich DMSM (Deterministic Morphological State Model)
+Heuristic Pattern & Morphological Structure Validator for Beinecke MS 408.
+
+Author: Yusuf Çakır
+License: MIT
+"""
+
 import os
 import re
-import urllib.request
-from collections import Counter, defaultdict
-from typing import Dict, List, Tuple
+import sys
+from collections import Counter
 
-class VoynichHerbalBatchValidator:
+# --- 1. MORPHOLOGICAL COMPONENT DEFINITIONS ---
+PREFIXES = ["qo", "cho", "sho", "ch", "sh", "da", "sa", "ot"]
+SUFFIXES = ["eedy", "edy", "aiin", "iin", "ar", "al", "am", "dy", "y"]
+
+# Positional Gallows Characters
+GALLOWS = {"k", "t", "p", "f"}
+
+# Curated Functional Category Mapping (Heuristic Dispensary Framing)
+LEXICON_FUNCTION_MAP = {
+    # Process / Operational Roots
+    "k": "PROC:prep",
+    "t": "PROC:extract",
+    "p": "PROC:infuse",
+    "f": "PROC:filter",
+    "ed": "PROC:decoct",
+    "eed": "PROC:distill",
+    # Substance / Herbal Candidates
+    "ar": "INGR:radix",
+    "al": "INGR:folia",
+    "am": "INGR:semen",
+    "aiin": "INGR:herba_ext",
+    "iin": "INGR:aqua_sol",
+    # Dosage / Measure Markers
+    "dy": "DOSE:unit",
+    "y": "STATE:terminal",
+    "l": "DOSE:part",
+    "m": "DOSE:weight",
+    # Syntactic / Structural Markers
+    "ch": "SYN:conn",
+    "sh": "SYN:iter",
+    "qo": "SYN:trans",
+    "da": "SYN:rel",
+    "sa": "SYN:cond",
+    "ot": "SYN:init"
+}
+
+def clean_ivtff_line(line: str) -> list[str]:
     """
-    Voynich Herbal Section (f1r - f66v) Batch Parsing & Validation Engine.
-    Implements a Deterministic Morphological State Model (DMSM) mapped
-    to medieval Latin/Italian pharmaceutical dispensary directives.
+    Strips IVTFF machine tags, uncertain glyph brackets, and metadata.
+    Preserves genuine inter-word delimiters.
     """
-    CORPUS_URL = "https://raw.githubusercontent.com/antenore/voynich-toolkit/master/eva_data/LSI_ivtff_0d.txt"
-    CACHE_FILE = "voynich_eva_corpus.txt"
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return []
+    
+    # Strip line tags like <f1r.1,@P0> or <f103r.1>
+    line = re.sub(r"<[^>]+>", "", line)
+    
+    # Strip transcription annotations like [m], {?}, $
+    line = re.sub(r"\[[^\]]*\]|\{[^\}]*\}|\$", "", line)
+    
+    # In IVTFF, words are separated by '.' or whitespace
+    raw_tokens = re.split(r"[.\s]+", line)
+    
+    # Normalize: keep valid EVA tokens (letters only)
+    cleaned = [t.lower() for t in raw_tokens if re.match(r"^[a-z]+$", t.lower())]
+    return cleaned
 
-    def __init__(self):
-        # Morphological affix inventories based on Tiltman / Stolfi models
-        self.prefixes = sorted(["qo", "cho", "sho", "o", "y", "so", "to", "po", "sa", "da", "d"], key=len, reverse=True)
-        self.suffixes = sorted(["aiin", "ain", "eedy", "edy", "eey", "ey", "dy", "am", "an", "al", "ar", "ol", "or", "y", "s", "m", "n"], key=len, reverse=True)
-
-        # Medieval Latin Pharmaceutical Lexicon Mapping
-        self.lexicon_map = {
-            "chedy": ("Recipe / Capiatur (Acquisition directive)", "PREP"),
-            "qokedy": ("Coquatur (Thermal decoction)", "PROC"),
-            "qokeedy": ("Coquantur diu (Prolonged decoction)", "PROC"),
-            "shedy": ("Succus expressus (Expressed juice)", "INGR"),
-            "qokain": ("Decoctionem (Decoction state)", "FORM"),
-            "chey": ("Cum (Conjunction / With)", "CONJ"),
-            "otaiin": ("Oleum (Oil / Lipid substrate)", "INGR"),
-            "okar": ("Oleo cocto (Cooked oil)", "INGR"),
-            "olar": ("Oleo (With oil)", "INGR"),
-            "olam": ("Oleum (Oil extract)", "INGR"),
-            "sholdy": ("Solvatur (Dissolution directive)", "PROC"),
-            "qotedy": ("Coctio teratur (Crushed decoction)", "PROC"),
-            "ytedy": ("Iterum teratur (Crush again)", "PROC"),
-            "cthey": ("Cum calido (With heat / warm)", "COND"),
-            "dal": ("Da / Dosis (Administer / Dose)", "DOSE"),
-            "dam": ("Drachmam (1 Drachm measure)", "DOSE"),
-            "dain": ("Drachma (Drachm measure)", "DOSE"),
-            "dar": ("Dare (Dispense to patient)", "DOSE"),
-            "shol": ("Solutio (Solution form)", "FORM"),
-            "shor": ("Solvere (Dissolve)", "PROC"),
-            "chor": ("Calor (Heat degree)", "COND"),
-            "chol": ("Calidum (Warm / Hot)", "COND"),
-            "cthor": ("Corticis (Bark / Root rind)", "INGR"),
-            "ar": ("Radix / Aromatica (Root / Herb)", "INGR"),
-            "dy": ("Die (Daily / Per day)", "DOSE"),
-        }
-
-    def fetch_data(self) -> str:
-        """Loads corpus from local cache or fetches from Beinecke mirror."""
-        if os.path.exists(self.CACHE_FILE):
-            with open(self.CACHE_FILE, "r", encoding="utf-8", errors="ignore") as f:
-                return f.read()
-        print("[*] Fetching official EVA corpus from mirror...")
-        req = urllib.request.Request(self.CORPUS_URL, headers={'User-Agent': 'VoynichBatch/1.0'})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            content = resp.read().decode("utf-8", errors="ignore")
-            with open(self.CACHE_FILE, "w", encoding="utf-8") as f:
-                f.write(content)
-            return content
-
-    def parse_folios(self, raw_data: str) -> Dict[str, List[str]]:
-        """Filters folios strictly belonging to Herbal Section 1 (f1r - f66v)."""
-        folios = defaultdict(list)
-        line_pat = re.compile(r'<f(\d+)([rv])(?:\.[^>]+)?>\s*(.*)')
-        
-        for line in raw_data.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            m = line_pat.match(line)
-            if m:
-                folio_num = int(m.group(1))
-                side = m.group(2)
-                if 1 <= folio_num <= 66:
-                    key = f"f{folio_num}{side}"
-                    text = m.group(3)
-                    # Strip transcription artifacts and uncertain characters
-                    text = re.sub(r'\{[^}]*\}', '', text)
-                    text = re.sub(r'\[[^\]]*\]', '', text)
-                    words = [re.sub(r'[^a-z]', '', w.lower()) for w in re.split(r'[\s\.\,]+', text)]
-                    words = [w for w in words if len(w) > 1]
-                    folios[key].extend(words)
-        return folios
-
-    def segment(self, word: str) -> Tuple[str, str, str]:
-        """Greedy longest-match decomposition into Prefix - Core - Suffix."""
-        prefix, suffix, core = "NULL", "NULL", word
-        for p in self.prefixes:
-            if core.startswith(p) and len(core) > len(p):
-                prefix = p
-                core = core[len(p):]
+def segment_token(token: str) -> tuple[str, str, str]:
+    """
+    Deterministic Tri-state Segmentation: Prefix -> Core -> Suffix.
+    Guarantees non-empty core preservation.
+    """
+    p, c, s = "", token, ""
+    
+    # Extract longest prefix
+    for pref in sorted(PREFIXES, key=len, reverse=True):
+        if c.startswith(pref):
+            # Avoid consuming the entire token if it leaves core empty
+            if len(c) > len(pref):
+                p = pref
+                c = c[len(pref):]
                 break
-        for s in self.suffixes:
-            if core.endswith(s) and len(core) > len(s):
-                suffix = s
-                core = core[:-len(s)]
+                
+    # Extract longest suffix
+    for suff in sorted(SUFFIXES, key=len, reverse=True):
+        if c.endswith(suff):
+            if len(c) > len(suff):
+                s = suff
+                c = c[:-len(suff)]
                 break
-        return prefix, (core if core else "NULL"), suffix
+                
+    return p, c, s
 
-    def translate_token(self, token: str) -> Tuple[str, str]:
-        """Maps token to dispensary semantic role via lexicon or morphological heuristics."""
-        if token in self.lexicon_map:
-            return self.lexicon_map[token]
+def evaluate_token(token: str) -> dict:
+    """
+    Categorizes the morphological components of a token.
+    """
+    p, c, s = segment_token(token)
+    
+    # Check if root/core or affixes trigger functional mapping
+    matched_features = []
+    if p in LEXICON_FUNCTION_MAP:
+        matched_features.append(LEXICON_FUNCTION_MAP[p])
+    if c in LEXICON_FUNCTION_MAP:
+        matched_features.append(LEXICON_FUNCTION_MAP[c])
+    if s in LEXICON_FUNCTION_MAP:
+        matched_features.append(LEXICON_FUNCTION_MAP[s])
         
-        p, c, s = self.segment(token)
-        if p == "qo":
-            return ("Coquantur/Coctio [Thermal Processing]", "PROC")
-        if p in ["ch", "cho"]:
-            return ("Recipe/Capiatur [Acquisition Directive]", "PREP")
-        if p in ["sh", "sho"]:
-            return ("Succus/Solutio [Fluid / Solvent Phase]", "INGR")
-        if p == "o" or s in ["ol", "or"]:
-            return ("Oleum/Oleata [Lipid / Mineral Substrate]", "INGR")
-        if p == "d" or s in ["am", "ain"]:
-            return ("Dosis/Drachma [Posological Measure]", "DOSE")
+    # Gallows presence check in core
+    has_gallows = any(g in c for g in GALLOWS)
+    
+    is_classified = len(matched_features) > 0
+    return {
+        "token": token,
+        "prefix": p,
+        "core": c,
+        "suffix": s,
+        "features": matched_features,
+        "has_gallows": has_gallows,
+        "status": "CLASSIFIED" if is_classified else "UNK"
+    }
+
+def analyze_corpus(corpus_path: str = "voynich_eva_corpus.txt"):
+    """
+    Executes a structured morphological audit on the corpus.
+    """
+    if not os.path.exists(corpus_path):
+        print(f"Error: Corpus file '{corpus_path}' not found.")
+        print("Please place the IVTFF corpus file in the working directory.")
+        return
+
+    print("Parsing EVA corpus...")
+    all_tokens = []
+    with open(corpus_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            tokens = clean_ivtff_line(line)
+            all_tokens.extend(tokens)
             
-        return ("(Unresolved Stem)", "UNK")
+    total_tokens = len(all_tokens)
+    if total_tokens == 0:
+        print("Error: No valid tokens parsed from corpus.")
+        return
 
-    def run_validation(self):
-        raw_text = self.fetch_data()
-        folios = self.parse_folios(raw_text)
-        
-        print("=" * 72)
-        print("VOYNICH HERBAL SECTION (f1r-f66v) BATCH VALIDATION REPORT")
-        print(f"Total Folios Evaluated: {len(folios)}")
-        print("=" * 72)
+    print(f"Total valid tokens parsed: {total_tokens:,}")
+    print(f"Unique vocabulary size: {len(set(all_tokens)):,}")
+    
+    classified_count = 0
+    gallows_count = 0
+    feature_counter = Counter()
+    empty_core_guard_count = 0
 
-        total_words = 0
-        total_matched = 0
-        folio_stats = []
-        global_roles = Counter()
+    for t in all_tokens:
+        res = evaluate_token(t)
+        if res["status"] == "CLASSIFIED":
+            classified_count += 1
+            for f in res["features"]:
+                feature_counter[f] += 1
+        if res["has_gallows"]:
+            gallows_count += 1
+        if not res["core"]:
+            empty_core_guard_count += 1
 
-        for folio, tokens in folios.items():
-            if not tokens:
-                continue
-            matched = 0
-            roles = Counter()
-            for t in tokens:
-                trans, role = self.translate_token(t)
-                roles[role] += 1
-                global_roles[role] += 1
-                if role != "UNK":
-                    matched += 1
+    heuristic_coverage = (classified_count / total_tokens) * 100
+    gallows_pct = (gallows_count / total_tokens) * 100
 
-            cov = (matched / len(tokens)) * 100 if tokens else 0
-            total_words += len(tokens)
-            total_matched += matched
-            folio_stats.append((folio, len(tokens), cov, roles))
-
-        print(f"{'Folio':<8} | {'Word Count':<12} | {'Coverage (%)':<16} | {'Proc (PROC)':<12} | {'Dose (DOSE)'}")
-        print("-" * 72)
-        for f, cnt, cov, r in folio_stats[:10]:
-            print(f"{f:<8} | {cnt:<12} | %{cov:<14.1f} | {r['PROC']:<12} | {r['DOSE']}")
-
-        overall_cov = (total_matched / total_words) * 100 if total_words > 0 else 0
-        print("=" * 72)
-        print("AGGREGATE BENCHMARK RESULTS:")
-        print(f"-> Total Tokens Analyzed  : {total_words:,}")
-        print(f"-> Successfully Resolved  : {total_matched:,}")
-        print(f"-> Mean Semantic Coverage : %{overall_cov:.2f}")
-        print("\nFUNCTIONAL ROLE DISTRIBUTION:")
-        for role, count in global_roles.most_common():
-            pct = (count / total_words) * 100
-            print(f"   [{role:<4}] {count:<6} tokens (%{pct:.1f})")
+    print("\n" + "="*50)
+    print("VOYNICH DMSM MORPHOLOGICAL AUDIT REPORT")
+    print("="*50)
+    print(f"Total Evaluated Tokens     : {total_tokens}")
+    print(f"Heuristically Tagged Tokens: {classified_count} ({heuristic_coverage:.2f}%)")
+    print(f"Unclassified (UNK) Tokens  : {total_tokens - classified_count} ({100 - heuristic_coverage:.2f}%)")
+    print(f"Gallows-Bearing Cores      : {gallows_count} ({gallows_pct:.2f}%)")
+    print(f"Empty Cores Permitted      : {empty_core_guard_count} (Must be 0)")
+    
+    print("\nTop Functional Feature Distributions:")
+    for feat, count in feature_counter.most_common(8):
+        print(f"  - {feat:20}: {count:6,} ({count/total_tokens*100:.2f}%)")
+    print("="*50)
+    print("NOTE: 'Tagged' rate denotes structural morphological compliance,")
+    print("NOT verified linguistic decipherment or semantic accuracy.")
 
 if __name__ == "__main__":
-    validator = VoynichHerbalBatchValidator()
-    validator.run_validation()
+    analyze_corpus()
